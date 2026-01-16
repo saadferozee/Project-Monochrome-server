@@ -364,7 +364,7 @@ app.delete('/api/services/:id', protect, authorize('admin'), async (req, res) =>
 // BOOKING ROUTES
 // ============================================
 
-// Create Booking (Public)
+// Create Booking (Public, but links to user if authenticated)
 app.post('/api/bookings', async (req, res) => {
   try {
     const { serviceId, name, email, phone, company, projectDescription, budget, timeline } = req.body;
@@ -378,7 +378,21 @@ app.post('/api/bookings', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Service not found' });
     }
 
+    // Check if user is authenticated
+    let userId = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer')) {
+      try {
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        userId = decoded.id;
+      } catch (error) {
+        // Token invalid or expired, continue without userId
+      }
+    }
+
     const booking = await Booking.create({
+      userId,
       serviceId,
       serviceName: service.name,
       servicePrice: service.price,
@@ -461,15 +475,18 @@ app.get('/api/bookings/stats', protect, authorize('admin'), async (req, res) => 
 // Get User's Bookings
 app.get('/api/bookings/my-bookings', protect, async (req, res) => {
   try {
+    console.log('Fetching bookings for user:', req.user.email, 'ID:', req.user.id);
+    
     const bookings = await Booking.find({ 
       $or: [
         { userId: req.user.id },
         { email: req.user.email }
       ]
     })
-      .populate('serviceId', 'name category price')
+      .populate('serviceId', 'name category price slug')
       .sort({ createdAt: -1 });
 
+    console.log('Found bookings:', bookings.length);
     res.status(200).json({ success: true, data: bookings });
   } catch (error) {
     console.error('Get user bookings error:', error);

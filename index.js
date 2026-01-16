@@ -551,6 +551,170 @@ app.delete('/api/bookings/:id', protect, authorize('admin'), async (req, res) =>
 });
 
 // ============================================
+// USER MANAGEMENT ROUTES (Admin only)
+// ============================================
+
+// Get All Users (Admin only)
+app.get('/api/users', protect, authorize('admin'), async (req, res) => {
+  try {
+    const { role, page = 1, limit = 50 } = req.query;
+    const query = role ? { role } : {};
+    
+    const users = await User.find(query)
+      .select('-password')
+      .sort({ createdAt: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const count = await User.countDocuments(query);
+
+    // Get booking counts for each user
+    const usersWithStats = await Promise.all(
+      users.map(async (user) => {
+        const bookingCount = await Booking.countDocuments({ userId: user._id });
+        return {
+          ...user.toObject(),
+          bookingCount
+        };
+      })
+    );
+
+    res.status(200).json({
+      success: true,
+      data: usersWithStats,
+      totalPages: Math.ceil(count / limit),
+      currentPage: page,
+      total: count
+    });
+  } catch (error) {
+    console.error('Get users error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// Get User by ID (Admin only)
+app.get('/api/users/:id', protect, authorize('admin'), async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select('-password');
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Get user's bookings
+    const bookings = await Booking.find({ userId: user._id })
+      .populate('serviceId', 'name category price')
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        ...user.toObject(),
+        bookings
+      }
+    });
+  } catch (error) {
+    console.error('Get user error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// Update User (Admin only)
+app.put('/api/users/:id', protect, authorize('admin'), async (req, res) => {
+  try {
+    const { name, email, role } = req.body;
+    
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Check if email is being changed and if it's already taken
+    if (email && email !== user.email) {
+      const emailExists = await User.findOne({ email });
+      if (emailExists) {
+        return res.status(400).json({ success: false, message: 'Email already in use' });
+      }
+      user.email = email;
+    }
+
+    if (name) user.name = name;
+    if (role) user.role = role;
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'User updated successfully',
+      data: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('Update user error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// Delete User (Admin only)
+app.delete('/api/users/:id', protect, authorize('admin'), async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Prevent deleting yourself
+    if (user._id.toString() === req.user._id.toString()) {
+      return res.status(400).json({ success: false, message: 'Cannot delete your own account' });
+    }
+
+    // Delete user's bookings
+    await Booking.deleteMany({ userId: user._id });
+
+    // Delete user
+    await User.findByIdAndDelete(req.params.id);
+
+    res.status(200).json({ success: true, message: 'User and associated bookings deleted successfully' });
+  } catch (error) {
+    console.error('Delete user error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// Get User Statistics (Admin only)
+app.get('/api/users/stats/overview', protect, authorize('admin'), async (req, res) => {
+  try {
+    const totalUsers = await User.countDocuments();
+    const adminUsers = await User.countDocuments({ role: 'admin' });
+    const regularUsers = await User.countDocuments({ role: 'user' });
+    
+    // Get recent users
+    const recentUsers = await User.find()
+      .select('-password')
+      .sort({ createdAt: -1 })
+      .limit(5);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        total: totalUsers,
+        admins: adminUsers,
+        users: regularUsers,
+        recent: recentUsers
+      }
+    });
+  } catch (error) {
+    console.error('Get user stats error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// ============================================
 // ERROR HANDLER
 // ============================================
 app.use((err, req, res, next) => {

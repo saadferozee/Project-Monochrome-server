@@ -43,9 +43,36 @@ app.use(express.urlencoded({ extended: true }));
 // ============================================
 // DATABASE CONNECTION
 // ============================================
-mongoose.connect(process.env.MONGODB_URI)
-.then(() => console.log('✅ MongoDB Connected Successfully'))
-.catch((err) => console.error('❌ MongoDB Connection Error:', err));
+let isConnected = false;
+
+const connectDB = async () => {
+  if (isConnected) return;
+  try {
+    await mongoose.connect(process.env.MONGODB_URI, {
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+      bufferCommands: false,
+    });
+    isConnected = true;
+    console.log('✅ MongoDB Connected Successfully');
+  } catch (err) {
+    console.error('❌ MongoDB Connection Error:', err);
+    throw err;
+  }
+};
+
+// Connect on startup
+connectDB();
+
+// Middleware to ensure DB connection on each request
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Database connection failed' });
+  }
+});
 
 // ============================================
 // MODELS

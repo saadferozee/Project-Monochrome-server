@@ -733,6 +733,129 @@ app.get('/api/users/stats/overview', protect, authorize('admin'), async (req, re
 });
 
 // ============================================
+// CONTACT / ASKS ROUTES
+// ============================================
+
+// Contact Model
+const contactSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  name: { type: String, required: true, trim: true },
+  email: { type: String, required: true, trim: true, lowercase: true },
+  subject: { type: String, required: true, trim: true },
+  message: { type: String, required: true, trim: true },
+  status: { type: String, enum: ['unread', 'read', 'replied'], default: 'unread' },
+  reply: { type: String, default: null },
+  repliedAt: { type: Date, default: null },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const Contact = mongoose.model('Contact', contactSchema);
+
+// Submit Contact Message (public)
+app.post('/api/contact', async (req, res) => {
+  try {
+    const { name, email, subject, message } = req.body;
+    if (!name || !email || !subject || !message) {
+      return res.status(400).json({ success: false, message: 'All fields are required' });
+    }
+
+    // Try to link to user account if email matches
+    const user = await User.findOne({ email });
+
+    const contact = await Contact.create({
+      userId: user ? user._id : null,
+      name, email, subject, message
+    });
+
+    res.status(201).json({ success: true, message: 'Message sent successfully', data: contact });
+  } catch (error) {
+    console.error('Contact submit error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// Get All Contact Messages (Admin only)
+app.get('/api/contact', protect, authorize('admin'), async (req, res) => {
+  try {
+    const { status } = req.query;
+    const query = status ? { status } : {};
+    const contacts = await Contact.find(query).sort({ createdAt: -1 });
+    res.status(200).json({ success: true, data: contacts });
+  } catch (error) {
+    console.error('Get contacts error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// Get My Messages (logged-in user)
+app.get('/api/contact/my-messages', protect, async (req, res) => {
+  try {
+    const contacts = await Contact.find({
+      $or: [{ userId: req.user.id }, { email: req.user.email }]
+    }).sort({ createdAt: -1 });
+    res.status(200).json({ success: true, data: contacts });
+  } catch (error) {
+    console.error('Get my messages error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// Reply to a Contact Message (Admin only)
+app.put('/api/contact/:id/reply', protect, authorize('admin'), async (req, res) => {
+  try {
+    const { reply } = req.body;
+    if (!reply) {
+      return res.status(400).json({ success: false, message: 'Reply text is required' });
+    }
+
+    const contact = await Contact.findById(req.params.id);
+    if (!contact) {
+      return res.status(404).json({ success: false, message: 'Message not found' });
+    }
+
+    contact.reply = reply;
+    contact.status = 'replied';
+    contact.repliedAt = new Date();
+    await contact.save();
+
+    res.status(200).json({ success: true, message: 'Reply sent successfully', data: contact });
+  } catch (error) {
+    console.error('Reply contact error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// Mark as Read (Admin only)
+app.put('/api/contact/:id/read', protect, authorize('admin'), async (req, res) => {
+  try {
+    const contact = await Contact.findById(req.params.id);
+    if (!contact) {
+      return res.status(404).json({ success: false, message: 'Message not found' });
+    }
+    if (contact.status === 'unread') {
+      contact.status = 'read';
+      await contact.save();
+    }
+    res.status(200).json({ success: true, data: contact });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// Delete Contact Message (Admin only)
+app.delete('/api/contact/:id', protect, authorize('admin'), async (req, res) => {
+  try {
+    const contact = await Contact.findByIdAndDelete(req.params.id);
+    if (!contact) {
+      return res.status(404).json({ success: false, message: 'Message not found' });
+    }
+    res.status(200).json({ success: true, message: 'Message deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// ============================================
 // ERROR HANDLER
 // ============================================
 app.use((err, req, res, next) => {

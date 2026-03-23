@@ -777,7 +777,7 @@ const contactSchema = new mongoose.Schema({
 
 const Contact = mongoose.model('Contact', contactSchema);
 
-// Submit Contact Message (public)
+// Submit Contact Message (public, but links to user if token provided)
 app.post('/api/contact', async (req, res) => {
   try {
     const { name, email, subject, message } = req.body;
@@ -785,14 +785,24 @@ app.post('/api/contact', async (req, res) => {
       return res.status(400).json({ success: false, message: 'All fields are required' });
     }
 
-    // Try to link to user account if email matches
-    const user = await User.findOne({ email });
+    // Try to get userId from token if provided
+    let userId = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        userId = decoded.id;
+      } catch (e) { /* ignore invalid token */ }
+    }
 
-    const contact = await Contact.create({
-      userId: user ? user._id : null,
-      name, email, subject, message
-    });
+    // Fallback: try to find user by email
+    if (!userId) {
+      const user = await User.findOne({ email });
+      if (user) userId = user._id;
+    }
 
+    const contact = await Contact.create({ userId, name, email, subject, message });
     res.status(201).json({ success: true, message: 'Message sent successfully', data: contact });
   } catch (error) {
     console.error('Contact submit error:', error);
@@ -817,7 +827,10 @@ app.get('/api/contact', protect, authorize('admin'), async (req, res) => {
 app.get('/api/contact/my-messages', protect, async (req, res) => {
   try {
     const contacts = await Contact.find({
-      $or: [{ userId: req.user.id }, { email: req.user.email }]
+      $or: [
+        { userId: req.user._id },
+        { email: req.user.email.toLowerCase() }
+      ]
     }).sort({ createdAt: -1 });
     res.status(200).json({ success: true, data: contacts });
   } catch (error) {
